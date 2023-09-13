@@ -1,0 +1,3 @@
+[submodule "RadeonML"]
+	path = RadeonML
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/RadeonML.git
