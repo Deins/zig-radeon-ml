@@ -9,10 +9,6 @@ pub const dim_unspecified = 0;
 /// Device index for automatic device selection
 pub const device_idx_unspecified = 0;
 
-/// An Unicode character
-/// UTF-8 encoding is used for Linux and MacOS and UTF-16 is used for Windows
-pub const Char = if (builtin.os.tag == .windows) std.os.windows.WCHAR else u8;
-
 /// A storage for multiple strings
 pub const Strings = extern struct {
     num_items: usize,
@@ -31,10 +27,13 @@ extern fn rmlGetLastError() [*:0]const u8;
 
 // Set whether logging is enabled.
 // @param[in] enabled Whether logging is enabled. Logging is enabled by default.
-inline fn setLoggingEnabled(enabled: bool) void {
-    rmlSetLoggingEnabled(if (enabled) .RML_TRUE else .RML_FALSE);
-}
-extern fn rmlSetLoggingEnabled(enabled: Bool) void;
+pub const setLoggingEnabled = @compileError("TODO: FIXME: Don't know why, but this function crashes at least on windows.");
+// pub inline fn setLoggingEnabled(enabled: bool) void {
+//     std.log.info("Enable logging: {}", .{@sizeOf(c_uint)});
+//     rmlSetLoggingEnabled(@intFromBool(enabled));
+//     std.log.info("done", .{});
+// }
+// extern fn rmlSetLoggingEnabled(enabled: c_uint) void;
 
 /// A context handle
 pub const Context = opaque {
@@ -56,16 +55,14 @@ pub const Context = opaque {
     /// The context should be released with rmlReleaseContext().
     pub inline fn initDefault(params: Params) Error!*Context {
         var ctx: *Context = undefined;
-        try CheckStatus(rmlCreateDefaultContext(params, &ctx));
+        try checkStatus(rmlCreateDefaultContext(params, &ctx));
         return ctx;
     }
     extern fn rmlCreateDefaultContext(params: Params, out_ctx: **Context) Status;
 
     /// Releases a context created with rmlCreateDefaultContext() or another context creating function,
     /// invalidates the handle.
-    pub inline fn deinit(self: *Context) void {
-        rmlReleaseContext(self);
-    }
+    pub const deinit = rmlReleaseContext;
     extern fn rmlReleaseContext(ctx: *Context) void;
 };
 
@@ -87,7 +84,7 @@ pub const Tensor = opaque {
     // The tensor should be released with rmlReleaseTensor().
     pub fn init(context: *Context, info: *const TensorInfo, mode: AccessMode) Error!Tensor {
         var tensor: *Tensor = undefined;
-        try CheckStatus(rmlCreateTensor(context, info, mode, &tensor));
+        try checkStatus(rmlCreateTensor(context, info, mode, &tensor));
         return tensor;
     }
     extern fn rmlCreateTensor(*Context, *const TensorInfo, AccessMode, **Tensor) Status;
@@ -105,7 +102,7 @@ pub const Tensor = opaque {
     ///
     pub fn getInfo(self: *Tensor) Error!TensorInfo {
         var res: *TensorInfo = undefined;
-        try CheckStatus(rmlGetTensorInfo(self, &res));
+        try checkStatus(rmlGetTensorInfo(self, &res));
         return res;
     }
     extern fn rmlGetTensorInfo(*Tensor, *TensorInfo) Status;
@@ -126,7 +123,7 @@ pub const Tensor = opaque {
     pub fn map(self: *Tensor) []u8 {
         var data: *u8 = undefined;
         var size: usize = undefined;
-        try CheckStatus(rmlMapTensor(self, &data, &size));
+        try checkStatus(rmlMapTensor(self, &data, &size));
         return data[0..size];
     }
     extern fn rmlMapTensor(*Tensor, data: **void, size: *usize) Status;
@@ -142,7 +139,7 @@ pub const Tensor = opaque {
     //
     // To get more details in case of failure, call rmlGetLastError().
     pub fn unmap(self: *Tensor, data: []const u8) Error!void {
-        try CheckStatus(rmlUnmapTensor(self, data.ptr));
+        try checkStatus(rmlUnmapTensor(self, data.ptr));
     }
     extern fn rmlUnmapTensor(*Tensor, data: *void) Status;
 
@@ -181,12 +178,14 @@ pub const Graph = opaque {
     //
     // To get more details in case of failure, call rmlGetLastError().
     // The graph should be released with rmlReleaseGraph().
-    pub fn loadFromFile(path: [*:0]const Char) Error!Graph {
+    pub fn loadFromFile(path: []const u8) Error!*Graph {
         var graph: *Graph = undefined;
-        try CheckStatus(rmlLoadGraphFromFile(path, &graph));
+        var wpath_buff : [std.fs.MAX_PATH_BYTES / @sizeOf(Char)] Char = undefined;
+        try checkStatus(rmlLoadGraphFromFile(pathToWidePath(path, &wpath_buff), &graph));
+        std.log.info("done", .{});
         return graph;
     }
-    extern fn rmlLoadGraphFromFile(path: [*:0]const Char, out: *Graph) Status;
+    extern fn rmlLoadGraphFromFile(path: [*:0]const Char, out: **Graph) Status;
 
     // Loads graph from a protobuf buffer.
     //
@@ -204,10 +203,14 @@ pub const Graph = opaque {
     // The graph should be released with rmlReleaseGraph().
     pub inline fn loadFromBuffer(buffer: []const u8, format: Format) Error!Graph {
         var graph: *Graph = undefined;
-        try CheckStatus(rmlLoadGraphFromBuffer(buffer.len, buffer.ptr, format, &graph));
+        try checkStatus(rmlLoadGraphFromBuffer(buffer.len, buffer.ptr, format, &graph));
         return graph;
     }
     extern fn rmlLoadGraphFromBuffer(size: usize, buffer: *const anyopaque, format: Format, out: *Graph) Status;
+
+    // Releases a graph created with rmlCreateGraph() or rmlLoadgraph(), invalidates the handle.
+    pub const deinit = rmlReleaseGraph;
+    extern fn rmlReleaseGraph(*Graph) void;
 };
 
 pub const Model = struct {
@@ -222,9 +225,9 @@ pub const Model = struct {
     //  - #RML_ERROR_BAD_PARAMETER if @p context or @p graph is invalid or @p model is NULL.
     //
     //  To get more details in case of failure, call rmlGetLastError().
-    pub inline fn initFromGraph(ctx: *Context, graph: *Graph) Error!Model {
+    pub inline fn initFromGraph(ctx: *Context, graph: *Graph) Error!*Model {
         var model: *Model = undefined;
-        try CheckStatus(rmlCreateModelFromGraph(ctx, graph));
+        try checkStatus(rmlCreateModelFromGraph(ctx, graph, &model));
         return model;
     }
     extern fn rmlCreateModelFromGraph(*Context, *Graph, out: **Model) Status;
@@ -246,7 +249,7 @@ pub const Model = struct {
     //
     // To get more details in case of failure, call rmlGetLastError().
     pub inline fn setOutputName(self: *Model, names: *const Strings) Error!void {
-        try CheckStatus(rmlSetModelOutputNames(self, names));
+        try checkStatus(rmlSetModelOutputNames(self, names));
     }
     extern fn rmlSetModelOutputNames(*Model, names: *const Strings) Status;
 
@@ -267,7 +270,7 @@ pub const Model = struct {
     // To get more details in case of failure, call rmlGetLastError().
     pub inline fn getInputInfo(self: *Model, name: [*:0]const u8) Error!TensorInfo {
         var res: TensorInfo = undefined;
-        try CheckStatus(rmlGetModelInputInfo(self, name));
+        try checkStatus(rmlGetModelInputInfo(self, name));
         return res;
     }
     extern fn rmlGetModelInputInfo(*Model, name: [*:0]const u8, out_info: *TensorInfo) Status;
@@ -287,7 +290,7 @@ pub const Model = struct {
     //
     // To get more details in case of failure, call rmlGetLastError().
     pub inline fn setInputInfo(self: *Model, name: [*:0]const u8, info: *const TensorInfo) !void {
-        try CheckStatus(rmlSetModelInputInfo(self, name, info));
+        try checkStatus(rmlSetModelInputInfo(self, name, info));
     }
     extern fn rmlSetModelInputInfo(*Model, name: [*:0]const u8, info: *const TensorInfo) Status;
 
@@ -308,7 +311,7 @@ pub const Model = struct {
     // To get more details in case of failure, call rmlGetLastError().
     pub inline fn getOutputInfo(self: *Model, name: [*:0]const u8) Error!TensorInfo {
         var res: TensorInfo = undefined;
-        try CheckStatus(rmlGetModelOutputInfo(self, name, &res));
+        try checkStatus(rmlGetModelOutputInfo(self, name, &res));
         return res;
     }
     extern fn rmlGetModelOutputInfo(*Model, name: [*:0]const u8, *TensorInfo) Status;
@@ -326,7 +329,7 @@ pub const Model = struct {
     // - #RML_ERROR_MODEL_NOT_READY if some inputs have unspecified dimensions.
     pub inline fn getMemoryInfo(self: *Model) Status {
         var mem_info: MemoryInfo = undefined;
-        try CheckStatus(rmlGetModelMemoryInfo(self, &mem_info));
+        try checkStatus(rmlGetModelMemoryInfo(self, &mem_info));
         return mem_info;
     }
     extern fn rmlGetModelMemoryInfo(*Model, *MemoryInfo) Status;
@@ -347,7 +350,7 @@ pub const Model = struct {
     //
     // To get more details in case of failure, call rmlGetLastError().
     pub inline fn setInput(model: *Model, name: [*:0]const u8, input: Tensor) Error!void {
-        try CheckStatus(rmlSetModelInput(model, name, input));
+        try checkStatus(rmlSetModelInput(model, name, input));
     }
     extern fn rmlSetModelInput(model: *Model, name: [*:0]const u8, input: Tensor) Status;
 
@@ -367,7 +370,7 @@ pub const Model = struct {
     //
     // To get more details in case of failure, call rmlGetLastError().
     pub inline fn setOutput(self: *Model, name: [*:0]const u8, output: *Tensor) Error!void {
-        try CheckStatus(rmlSetModelOutput(self, name, output));
+        try checkStatus(rmlSetModelOutput(self, name, output));
     }
     extern fn rmlSetModelOutput(*Model, name: [*:0]const u8, *Tensor) Status;
 
@@ -387,7 +390,7 @@ pub const Model = struct {
     //
     // To get more details in case of failure, call rmlGetLastError().
     pub inline fn prepare(self: *Model) Error!void {
-        try CheckStatus(rmlPrepareModel(self));
+        try checkStatus(rmlPrepareModel(self));
     }
     extern fn rmlPrepareModel(*Model) Status;
 
@@ -407,7 +410,7 @@ pub const Model = struct {
     //
     // To get more details in case of failure, call rmlGetLastError().
     pub inline fn infer(self: *Model) Error!void {
-        try CheckStatus(rmlInfer(self));
+        try checkStatus(rmlInfer(self));
     }
     extern fn rmlInfer(*Model) Status;
 
@@ -426,7 +429,7 @@ pub const Model = struct {
     //
     // To get more details in case of failure, call rmlGetLastError().
     pub inline fn resetStates(self: *Model) Error!void {
-        try CheckStatus(self);
+        try checkStatus(self);
     }
     extern fn rmlResetModelStates(*Model) Status;
 };
@@ -446,7 +449,7 @@ pub const Error = error {
 };
 
 /// Data type
-pub const DataType = enum(c_int) {
+pub const DType = enum(c_int) {
     UNSPECIFIED = 0,    //  Unspecified data type.
     FLOAT32 = 100,      //  Full precision float type.
     FLOAT16 = 101,      //  Half precision float type.
@@ -513,7 +516,7 @@ pub const MemoryInfo = extern struct {
 /// N-dimensional tensor description.
 pub const TensorInfo = extern struct {
     /// Tensor data type.
-    dtype: DataType,
+    dtype: DType,
     /// Physical tensor data layout.
     layout: Layout,
     /// Tensor shape where axes order must correspond to the data layout.
@@ -537,7 +540,7 @@ const Status = enum(c_int) {
     RML_ERROR_UNSUPPORTED_DATA = -180, // An unsupported scenario.
 };
 
-fn StatusAsError(status: Status) Error {
+fn statusAsError(status: Status) Error {
     switch (status) {
         .RML_OK => unreachable,
         .RML_ERROR_BAD_MODEL => return error.BAD_MODEL,
@@ -552,11 +555,19 @@ fn StatusAsError(status: Status) Error {
     }
 }
 
-fn CheckStatus(status: Status) Error!void {
-    if (status != .RML_OK) return StatusAsError(status);
+fn checkStatus(status: Status) Error!void {
+    if (status != .RML_OK) return statusAsError(status);
 }
 
-const Bool = enum(c_int) {
-    RML_FALSE = 0,
-    RML_TRUE = 1,
-};
+/// An Unicode character
+/// UTF-8 encoding is used for Linux and MacOS and UTF-16 is used for Windows
+const Char = if (builtin.os.tag == .windows) std.os.windows.WCHAR else u8;
+/// Create path that is null sentinel terminated, as well as convert from u8 to u16 if needed 
+/// out_buff must be large enough to fit str + 1 (for 0 sentinel terminator)
+fn pathToWidePath(str : []const u8, out_buff : []Char) [:0]Char {
+    std.debug.assert(str.len + 1 < out_buff.len);
+    var i : u32 = 0;
+    while (i < str.len) : (i+=1) out_buff[i] = @intCast(str[i]);
+    out_buff[i] = 0;
+    return @ptrCast(out_buff[0..i]);
+}
